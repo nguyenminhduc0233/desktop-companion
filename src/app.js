@@ -75,17 +75,15 @@
   root.appendChild(pet); pet.appendChild(portrait);
   // ---- 2D LIVING-PORTRAIT renderer (face layers + secondary micro-motion) ----
   let layerList = [], layerById = {}, lastCfg = null;
-  const Z = { base: 1, windL: 2, windR: 2, walkA: 2, walkB: 2, talk: 3, blink: 4 };   // pose variants under the eye/mouth layers
+  const Z = { base: 1, wind: 2, talk: 3, blink: 4 };   // wind frames sit under the eye/mouth layers
   const ANIM = { blinkEveryMin: 2.4, blinkEveryMax: 5.5 };
+  const WIND = { frames: [], fps: 7, a: null, b: null };   // hair-breeze frame sequence (played ping-pong during a gust)
   function defaultCharacter() {
     const im = (id) => FRAMES[id];
     return {
-      format: 'desktop-companion-character', version: 3, name: settings.name, canvas: 512,
-      layers: [
-        { id: 'base', image: im('base') }, { id: 'blink', image: im('blink') }, { id: 'talk', image: im('talk') },
-        { id: 'windL', image: im('windL') }, { id: 'windR', image: im('windR') },
-        { id: 'walkA', image: im('walkA') }, { id: 'walkB', image: im('walkB') }
-      ],
+      format: 'desktop-companion-character', version: 4, name: settings.name, canvas: 416,
+      layers: [ { id: 'base', image: im('base') }, { id: 'blink', image: im('blink') }, { id: 'talk', image: im('talk') } ],
+      windFrames: (FRAMES.windFrames || []).slice(), windFps: 7,
       anim: { blinkEveryMin: 2.4, blinkEveryMax: 5.5 }
     };
   }
@@ -100,6 +98,12 @@
       portrait.appendChild(im);
       const o = { id: l.id, image: l.image, img: im }; layerList.push(o); layerById[l.id] = o;
     });
+    // ---- wind: two <img> cross-blended to play the hair-breeze frame sequence ----
+    WIND.frames = (cfg.windFrames || []).slice(); WIND.fps = cfg.windFps || 7; WIND.a = null; WIND.b = null;
+    if (WIND.frames.length >= 2) {
+      const mk = () => { const im = document.createElement('img'); im.className = 'layer'; im.draggable = false; im.style.zIndex = Z.wind; im.style.opacity = 0; im.src = WIND.frames[0]; portrait.appendChild(im); return im; };
+      WIND.a = mk(); WIND.b = mk();
+    }
     Object.assign(ANIM, cfg.anim || {});
   }
   buildRig(defaultCharacter());
@@ -115,11 +119,11 @@
   // ---------------- animation state ----------------
   let mood = 'normal';          // normal | happy | sleepy | annoyed | surprise | celebrate
   let t = 0, last = performance.now();
-  let facing = 1, walking = false, walkPhase = 0, walkEnv = 0;
+  let facing = 1, walking = false;
   let gaze = { x: 0, y: 0 }, gazeT = { x: 0, y: 0 };
   // face state
   let blinking = false, blinkStart = 0, nextBlinkAt = 1.5;
-  let talkUntil = 0, windOpCur = 0;
+  let talkUntil = 0, windIdx = 0, windEnv = 0;
   // ambient wind gusts (snow / sakura / dry leaves / green leaves)
   const FX = { canvas: null, ctx: null, parts: [], type: null, gustUntil: 0, windX: 1, nextGustAt: 0, windCur: 0 };
   const GUSTS = ['snow', 'sakura', 'dryleaf', 'greenleaf'];
@@ -133,38 +137,40 @@
   function loop(now) {
     requestAnimationFrame(loop);
     const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
-    walking = motion.state === 'walk';
     gaze.x = lerp(gaze.x, gazeT.x, Math.min(1, dt * 6)); gaze.y = lerp(gaze.y, gazeT.y, Math.min(1, dt * 6));
 
-    // ---- body still when idle; mirror when walking ----
+    // ---- body stands still in place (no roaming, no idle body motion) ----
     portrait.style.transform = `scale(${facing}, 1)`;
 
-    // ---- WALK: subtle leg step-cycle by softly cross-blending 2 in-between poses ----
-    walking = motion.state === 'walk';
-    walkEnv += ((walking ? 1 : 0) - walkEnv) * Math.min(1, dt * 3.5);   // ease start/stop
-    if (walking) walkPhase += dt * 1.15;                                // ~1.15 steps/sec (calm)
-    const s = Math.sin(walkPhase * Math.PI * 2), wAmp = 0.85 * walkEnv;
-    if (layerById.walkA) layerById.walkA.img.style.opacity = (Math.max(0, s) * wAmp).toFixed(3);
-    if (layerById.walkB) layerById.walkB.img.style.opacity = (Math.max(0, -s) * wAmp).toFixed(3);
+    // ---- WIND: play the hair-breeze frame sequence (ping-pong) while a gust is on ----
+    const gusting = now < FX.gustUntil;
+    let envTarget = gusting ? 1 : 0;
+    if (now < talkUntil) envTarget = 0;                                   // hide wind so speech reads clearly
+    windEnv += (envTarget - windEnv) * Math.min(1, dt * 3);               // smooth ease in / out
+    if (WIND.a && WIND.frames.length >= 2) {
+      const n = WIND.frames.length, span = (n - 1) * 2;                   // ping-pong: 0→n-1→0
+      if (gusting) windIdx += dt * WIND.fps;
+      let ph = windIdx % span; if (ph < 0) ph += span;
+      const k = Math.floor(ph), frac = ph - k;
+      const map = (j) => (j <= n - 1 ? j : span - j);
+      const ia = map(k), ib = map((k + 1) % span);
+      if (WIND.a.src !== WIND.frames[ia]) WIND.a.src = WIND.frames[ia];
+      if (WIND.b.src !== WIND.frames[ib]) WIND.b.src = WIND.frames[ib];
+      WIND.a.style.opacity = windEnv.toFixed(3);
+      WIND.b.style.opacity = (windEnv * frac).toFixed(3);
+    }
 
-    // ---- WIND (idle only): whisper-soft hair/cardigan drift (subtle variant held high & smooth) ----
-    const gusting = now < FX.gustUntil && !walking;
-    let windTarget = gusting ? (0.8 + 0.1 * Math.sin(t * 1.4)) : 0;   // hold ~0.7-0.9 → clean, gentle, continuous
-    if (now < talkUntil) windTarget *= 0.25;                          // let speech read clearly
-    windOpCur += (windTarget - windOpCur) * Math.min(1, dt * 2.0);    // slow smooth ease in / out
-    const useR = FX.windX >= 0;
-    if (layerById.windR) layerById.windR.img.style.opacity = (useR ? windOpCur : 0).toFixed(3);
-    if (layerById.windL) layerById.windL.img.style.opacity = (useR ? 0 : windOpCur).toFixed(3);
-
-    // ---- eyes: gentle blink (always — wind variant barely differs, so no snap) ----
+    // ---- eyes: gentle blink (paused briefly during a gust, resumes right after) ----
     let blinkAmt = 0;
-    if (!blinking && t > nextBlinkAt) { blinking = true; blinkStart = t; nextBlinkAt = t + ANIM.blinkEveryMin + Math.random() * (ANIM.blinkEveryMax - ANIM.blinkEveryMin); }
-    if (blinking) { const bp = (t - blinkStart) / 0.13; if (bp >= 1) blinking = false; else blinkAmt = Math.sin(Math.min(1, bp) * Math.PI); }
-    if (mood === 'sleepy') blinkAmt = Math.max(blinkAmt, 0.6 + Math.sin(t * 1.1) * 0.08);
+    if (windEnv < 0.5) {
+      if (!blinking && t > nextBlinkAt) { blinking = true; blinkStart = t; nextBlinkAt = t + ANIM.blinkEveryMin + Math.random() * (ANIM.blinkEveryMax - ANIM.blinkEveryMin); }
+      if (blinking) { const bp = (t - blinkStart) / 0.13; if (bp >= 1) blinking = false; else blinkAmt = Math.sin(Math.min(1, bp) * Math.PI); }
+      if (mood === 'sleepy') blinkAmt = Math.max(blinkAmt, 0.6 + Math.sin(t * 1.1) * 0.08);
+    } else { blinking = false; nextBlinkAt = t + 1.0; }
 
     // ---- mouth: talk while speaking ----
     let talkAmt = 0;
-    if (now < talkUntil) talkAmt = (Math.sin(t * 17) * 0.5 + 0.5);
+    if (now < talkUntil && windEnv < 0.5) talkAmt = (Math.sin(t * 17) * 0.5 + 0.5);
     if (layerById.talk) layerById.talk.img.style.opacity = (talkAmt * (1 - blinkAmt)).toFixed(2);
     if (layerById.blink) layerById.blink.img.style.opacity = blinkAmt.toFixed(2);
 
@@ -251,7 +257,7 @@
       if (performance.now() > motion.until) motion.state = 'idle';
     }
   }
-  setInterval(() => { if (busy() || motion.falling || mood === 'sleepy') return; if (Math.random() < 0.5) { motion.state = 'walk'; facing = Math.random() < 0.5 ? 1 : -1; motion.until = performance.now() + (1400 + Math.random() * 2600); } else motion.state = 'idle'; }, 3800);
+  // Roaming disabled — the character stays put (only eyes blink; hair sways on a gust). It can still be dragged.
 
   // ---------------- emotion / energy ----------------
   let energy = clamp(store.get('energy', 100), 0, 100);
