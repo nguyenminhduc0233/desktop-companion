@@ -1,17 +1,16 @@
 // ===========================================================================
-// Desktop Companion — 2D SKELETAL RIG renderer (v2, hierarchical bones).
-// The character is split into 7 parts: body (root) + upperArm/foreArm (L,R,
-// jointed at the elbow) + legL/legR (jointed at the hips). A matrix
-// forward-kinematics engine composes each bone's world transform from its
-// parent EVERY frame (60fps), and a spring integrator adds secondary motion
-// (lag + follow-through/overshoot) — the in-between poses are COMPUTED, not
-// hand-drawn, so walking (alternating legs), waving (bend at the elbow) and
-// idle sway are all smooth.
-//   window.PET_FRAMES -> { body, upperArmL, foreArmL, upperArmR, foreArmR, legL, legR }
-//                        (each a full-canvas transparent PNG on a 720 square)
+// Desktop Companion — 2D LIVING-PORTRAIT renderer.
+// No limb rig (that looked like a puppet). The character is ONE coherent
+// image animated the way Live2D / VTuber avatars are:
+//   • three registered face layers — base (eyes open), blink (eyes closed),
+//     talk (mouth open) — crossfaded by opacity for natural BLINKING and
+//     mouth movement while SPEAKING;
+//   • whole-body secondary micro-motion — gentle breathing, idle sway, and a
+//     subtle lean toward the cursor — so it feels alive, not stiff.
+//   window.PET_FRAMES -> { base, blink, talk }  (registered transparent PNGs)
 //   window.petAPI     -> Electron bridge (optional)
-// Bones/pivots/rest-angles live in the character pack (.character.json) so the
-// rig is fully editable/importable without touching code.
+// Layers + animation params live in the character pack (.character.json) so
+// the character is fully editable/importable without touching code.
 // ===========================================================================
 (function () {
   const FRAMES = window.PET_FRAMES || {};
@@ -47,21 +46,21 @@
   async function idbDel(k) { const db = await idb(); return new Promise((res) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').delete(k); tx.oncomplete = () => res(); }); }
 
   // ---- character pack: validate / load / import / export ----
-  function validChar(c) { return !!(c && c.format === 'desktop-companion-character' && ((Array.isArray(c.bones) && c.bones.length) || (Array.isArray(c.parts) && c.parts.length))); }
+  function validChar(c) { return !!(c && c.format === 'desktop-companion-character' && ((Array.isArray(c.layers) && c.layers.length) || (Array.isArray(c.bones) && c.bones.length) || (Array.isArray(c.parts) && c.parts.length))); }
   async function loadStoredCharacter() { try { const c = await idbGet('character'); if (validChar(c)) { buildRig(c); if (c.name) settings.name = c.name; } } catch (e) {} }
   async function importCharacterFile(file) {
     try {
       const c = JSON.parse(await file.text());
-      if (!validChar(c)) throw new Error('Sai định dạng (thiếu format/parts)');
+      if (!validChar(c)) throw new Error('Sai định dạng (thiếu format/layers)');
       buildRig(c); await idbSet('character', c);
       if (c.name) { settings.name = c.name; saveSettings(); }
-      setMood('happy', 2500); setGesture('wave', 1800); say('Đã nạp nhân vật mới từ file!');
+      setMood('happy', 2600); say('Đã nạp nhân vật mới từ file!');
     } catch (e) { setMood('annoyed', 3000); say('File nhân vật lỗi: ' + (e.message || e)); }
   }
-  function imgToDataURL(img) { try { const c = document.createElement('canvas'); c.width = img.naturalWidth || 720; c.height = img.naturalHeight || 720; c.getContext('2d').drawImage(img, 0, 0); return c.toDataURL('image/png'); } catch (e) { return null; } }
+  function imgToDataURL(img) { try { const c = document.createElement('canvas'); c.width = img.naturalWidth || 512; c.height = img.naturalHeight || 512; c.getContext('2d').drawImage(img, 0, 0); return c.toDataURL('image/png'); } catch (e) { return null; } }
   function exportCharacter() {
-    const bones = boneList.map((b) => ({ id: b.id, image: (b.img && imgToDataURL(b.img)) || b.image, parent: b.parent || null, pivot: b.pivot || [50, 50], rest: b.rest || 0, z: b.z || 1 }));
-    const out = { format: 'desktop-companion-character', version: 2, name: settings.name, canvas: (lastCfg && lastCfg.canvas) || 720, bones, rig: { legSwing: RIG.legSwing, armSwing: RIG.armSwing } };
+    const layers = layerList.map((l) => ({ id: l.id, image: (l.img && imgToDataURL(l.img)) || l.image }));
+    const out = { format: 'desktop-companion-character', version: 3, name: settings.name, canvas: (lastCfg && lastCfg.canvas) || 512, layers, anim: ANIM };
     const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob); const a = document.createElement('a');
     a.href = url; a.download = (settings.name || 'character') + '.character.json'; document.body.appendChild(a); a.click(); a.remove();
@@ -74,117 +73,86 @@
   const pet = document.createElement('div'); pet.id = 'pet';
   const portrait = document.createElement('div'); portrait.id = 'portrait';
   root.appendChild(pet); pet.appendChild(portrait);
-  // ---- 2D skeletal rig: hierarchical bones + matrix forward-kinematics ----
-  const L = 300;                 // logical square (px) the rig math runs in
-  let boneList = [], byIdBone = {}, lastCfg = null;
-  const RIG = { legSwing: 8, armSwing: 14 };
-  // affine matrix helpers  [a,b,c,d,e,f] = [[a c e],[b d f],[0 0 1]]
-  const mMul = (A, B) => [A[0]*B[0]+A[2]*B[1], A[1]*B[0]+A[3]*B[1], A[0]*B[2]+A[2]*B[3], A[1]*B[2]+A[3]*B[3], A[0]*B[4]+A[2]*B[5]+A[4], A[1]*B[4]+A[3]*B[5]+A[5]];
-  const mTrans = (x, y) => [1, 0, 0, 1, x, y];
-  const mRotAbout = (px, py, deg) => { const r = deg*Math.PI/180, co = Math.cos(r), si = Math.sin(r); return [co, si, -si, co, px - co*px + si*py, py - si*px - co*py]; };
-  const mScaleAbout = (px, py, sx, sy) => [sx, 0, 0, sy, px - sx*px, py - sy*py];
+  // ---- 2D LIVING-PORTRAIT renderer (face layers + secondary micro-motion) ----
+  let layerList = [], layerById = {}, lastCfg = null;
+  const Z = { base: 1, talk: 2, blink: 3 };            // blink drawn on top of talk
+  const ANIM = { breatheAmp: 0.012, bobAmp: 2.0, swayDeg: 0.7, blinkEveryMin: 2.4, blinkEveryMax: 5.5 };
   function defaultCharacter() {
     const im = (id) => FRAMES[id];
     return {
-      format: 'desktop-companion-character', version: 2, name: settings.name, canvas: 720,
-      bones: [
-        { id: 'legL', image: im('legL'), parent: 'body', pivot: [44.7, 59.7], rest: -20, z: 1 },
-        { id: 'legR', image: im('legR'), parent: 'body', pivot: [55.3, 59.7], rest: 20, z: 1 },
-        { id: 'body', image: im('body'), parent: null, pivot: [50, 100], rest: 0, z: 3 },
-        { id: 'upperArmL', image: im('upperArmL'), parent: 'body', pivot: [43.1, 25], rest: -78, z: 5 },
-        { id: 'foreArmL', image: im('foreArmL'), parent: 'upperArmL', pivot: [26.4, 25.7], rest: 0, z: 5 },
-        { id: 'upperArmR', image: im('upperArmR'), parent: 'body', pivot: [56.4, 25], rest: 78, z: 5 },
-        { id: 'foreArmR', image: im('foreArmR'), parent: 'upperArmR', pivot: [73.3, 25.7], rest: 0, z: 5 }
-      ],
-      rig: { legSwing: 8, armSwing: 14 }
+      format: 'desktop-companion-character', version: 3, name: settings.name, canvas: 512,
+      layers: [ { id: 'base', image: im('base') }, { id: 'blink', image: im('blink') }, { id: 'talk', image: im('talk') } ],
+      anim: { breatheAmp: 0.012, bobAmp: 2.0, swayDeg: 0.7, blinkEveryMin: 2.4, blinkEveryMax: 5.5 }
     };
   }
   function buildRig(cfg) {
-    lastCfg = cfg; portrait.innerHTML = '';
-    let defs = cfg.bones;
-    if (!defs && cfg.parts) defs = cfg.parts.map((p) => ({ id: p.id, image: p.image, parent: null, pivot: p.pivot || [50, 50], rest: 0, z: p.z || 1 }));
-    const bones = (defs || []).map((b) => ({ ...b, angle: b.rest || 0, target: b.rest || 0, vel: 0, _w: [1, 0, 0, 1, 0, 0] }));
-    // topo order: parents before children
-    const map = {}; bones.forEach((b) => { map[b.id] = b; });
-    const out = [], seen = {};
-    function visit(b) { if (!b || seen[b.id]) return; if (b.parent && map[b.parent]) visit(map[b.parent]); seen[b.id] = 1; out.push(b); }
-    bones.forEach(visit);
-    boneList = out; byIdBone = map;
-    [...bones].sort((a, b) => (a.z || 0) - (b.z || 0)).forEach((b) => { const im = document.createElement('img'); im.className = 'part'; im.draggable = false; im.src = b.image; im.style.transformOrigin = '0 0'; b.img = im; portrait.appendChild(im); });
-    RIG.legSwing = (cfg.rig && cfg.rig.legSwing) || 8;
-    RIG.armSwing = (cfg.rig && cfg.rig.armSwing) || 14;
+    lastCfg = cfg; portrait.innerHTML = ''; layerList = []; layerById = {};
+    let defs = cfg.layers;
+    if (!defs) { const arr = cfg.bones || cfg.parts || []; const b = arr.find((x) => x.id === 'body') || arr[0]; defs = b ? [{ id: 'base', image: b.image }] : []; }
+    defs.forEach((l, i) => {
+      const im = document.createElement('img'); im.className = 'layer'; im.draggable = false; im.src = l.image;
+      im.style.zIndex = Z[l.id] != null ? Z[l.id] : (i + 1);
+      im.style.opacity = (l.id === 'base' || i === 0) ? 1 : 0;
+      portrait.appendChild(im);
+      const o = { id: l.id, image: l.image, img: im }; layerList.push(o); layerById[l.id] = o;
+    });
+    Object.assign(ANIM, cfg.anim || {});
   }
-  function restOf(id) { return byIdBone[id] ? (byIdBone[id].rest || 0) : 0; }
   buildRig(defaultCharacter());
 
   const bubble = document.createElement('div'); bubble.id = 'bubble'; bubble.style.opacity = 0; root.appendChild(bubble);
   const bar = document.createElement('div'); bar.id = 'bar';
-  bar.innerHTML = '<button data-a="chat" title="Trò chuyện">💬</button><button data-a="joke" title="Chuyện cười">😂</button><button data-a="wave" title="Vẫy tay">👋</button><button data-a="settings" title="Cài đặt">⚙️</button>' + (isEl ? '<button data-a="quit" title="Thoát">✖</button>' : '');
+  bar.innerHTML = '<button data-a="chat" title="Trò chuyện">💬</button><button data-a="joke" title="Chuyện cười">😂</button><button data-a="wave" title="Chào">👋</button><button data-a="settings" title="Cài đặt">⚙️</button>' + (isEl ? '<button data-a="quit" title="Thoát">✖</button>' : '');
   root.appendChild(bar);
   const chat = document.createElement('div'); chat.id = 'chatbox'; chat.style.display = 'none';
   chat.innerHTML = '<input id="chatin" placeholder="Nói với mình…" /><button id="chatsend">➤</button>';
   root.appendChild(chat);
 
-  // ---------------- rig / animation state ----------------
+  // ---------------- animation state ----------------
   let mood = 'normal';          // normal | happy | sleepy | annoyed | surprise | celebrate
   let t = 0, last = performance.now();
-  let facing = 1, walkPhase = 0;
-  let gesture = null, gestureUntil = 0;      // 'wave'
+  let facing = 1, walking = false;
   let gaze = { x: 0, y: 0 }, gazeT = { x: 0, y: 0 };
+  // face state
+  let blinking = false, blinkStart = 0, nextBlinkAt = 1.5;
+  let talkUntil = 0, greetUntil = 0, popUntil = 0;
 
   function setMood(m, holdMs) {
     mood = m || 'normal';
-    if (m === 'happy' || m === 'celebrate') setGesture('wave', 1600);
+    if (m === 'happy' || m === 'celebrate') greetUntil = performance.now() + 950;
+    if (m === 'surprise') popUntil = performance.now() + 520;
     if (holdMs) { clearTimeout(setMood._t); setMood._t = setTimeout(() => { mood = 'normal'; }, holdMs); }
   }
-  function setGesture(g, ms) { gesture = g; gestureUntil = performance.now() + (ms || 1500); }
+  function greetNow() { greetUntil = performance.now() + 1100; }
 
   function loop(now) {
     requestAnimationFrame(loop);
     const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
-    const walking = motion.state === 'walk';
-    if (walking) walkPhase = (walkPhase + dt * 2.0) % 1;
-    if (gesture && now > gestureUntil) gesture = null;
-
-    // ---- gaze smoothing ----
+    walking = motion.state === 'walk';
     gaze.x = lerp(gaze.x, gazeT.x, Math.min(1, dt * 6)); gaze.y = lerp(gaze.y, gazeT.y, Math.min(1, dt * 6));
-    const p2 = walkPhase * Math.PI * 2;
 
-    // ---- per-bone TARGET angles (limbs) ----
-    boneList.forEach((b) => { if (b.id !== 'body') b.target = b.rest || 0; });
-    const idleSway = Math.sin(t * 1.1) * 3;                    // gentle idle arm sway
-    if (byIdBone.upperArmL) byIdBone.upperArmL.target = restOf('upperArmL') + idleSway;
-    if (byIdBone.upperArmR) byIdBone.upperArmR.target = restOf('upperArmR') - idleSway;
-    if (walking) {                                             // alternating leg + counter-arm swing
-      if (byIdBone.legL) byIdBone.legL.target = restOf('legL') + Math.sin(p2) * RIG.legSwing;
-      if (byIdBone.legR) byIdBone.legR.target = restOf('legR') + Math.sin(p2 + Math.PI) * RIG.legSwing;
-      if (byIdBone.upperArmL) byIdBone.upperArmL.target = restOf('upperArmL') + Math.sin(p2 + Math.PI) * RIG.armSwing;
-      if (byIdBone.upperArmR) byIdBone.upperArmR.target = restOf('upperArmR') + Math.sin(p2) * RIG.armSwing;
-      if (byIdBone.foreArmL) byIdBone.foreArmL.target = Math.max(0, Math.sin(p2 + Math.PI)) * 16;   // slight elbow bend on forward swing
-      if (byIdBone.foreArmR) byIdBone.foreArmR.target = Math.max(0, Math.sin(p2)) * 16;
-    }
-    if (mood === 'sleepy') { if (byIdBone.upperArmL) byIdBone.upperArmL.target = restOf('upperArmL') + 6; if (byIdBone.upperArmR) byIdBone.upperArmR.target = restOf('upperArmR') - 6; }
-    if (gesture === 'wave' && byIdBone.upperArmR && byIdBone.foreArmR) { byIdBone.upperArmR.target = -18; byIdBone.foreArmR.target = -28 + Math.sin(t * 10) * 30; }  // raise upper arm, wave at the elbow
+    // ---- whole-body micro-motion: breathing / idle sway / lean toward cursor ----
+    let breathe = 1 + Math.sin(t * 1.6) * ANIM.breatheAmp;
+    let bob = Math.sin(t * 1.6) * ANIM.bobAmp;
+    let sway = Math.sin(t * 0.8) * ANIM.swayDeg;
+    let tx = gaze.x * 6, ty = gaze.y * 2;
+    let rot = gaze.x * 1.2 + sway;
+    if (walking) { bob += -Math.abs(Math.sin(t * 7)) * 3; rot += facing * 1.5; }       // gentle floaty stride
+    if (mood === 'sleepy') { breathe = 1 + Math.sin(t * 0.9) * 0.02; rot += 2.2; bob += 3; }
+    if (mood === 'annoyed') { tx += Math.sin(t * 34) * 3; }                              // quick shiver
+    if (now < greetUntil) { const k = (greetUntil - now) / 950; bob += -Math.abs(Math.sin(now / 85)) * 8 * k; breathe += 0.03 * k; }  // happy bounce
+    if (now < popUntil) { const k = (popUntil - now) / 520; breathe += 0.06 * k; bob += -6 * k; }                                    // surprise pop
+    portrait.style.transform = `translate(${tx.toFixed(1)}px, ${(bob + ty).toFixed(1)}px) rotate(${rot.toFixed(2)}deg) scale(${(facing * breathe).toFixed(4)}, ${breathe.toFixed(4)})`;
 
-    // ---- spring integrate = secondary motion (lag + follow-through / overshoot) ----
-    const stiff = 200, damp = 16;
-    boneList.forEach((b) => { if (b.id === 'body') return; const f = (b.target - b.angle) * stiff; b.vel += f * dt; b.vel *= Math.max(0, 1 - damp * dt); b.angle += b.vel * dt; });
-
-    // ---- body / global transform (bob, breathe, lean, facing) ----
-    let bob = Math.sin(t * 1.6) * 1.4, breathe = 1 + Math.sin(t * 1.6) * 0.012, lean = gaze.x * 3;
-    if (walking) { bob = -Math.abs(Math.sin(p2)) * 4.5; lean = facing * 2 + Math.sin(p2) * 1.4; }
-    if (mood === 'annoyed' && gesture !== 'wave') lean += Math.sin(t * 28) * 2.2;
-    if (mood === 'sleepy') { lean += 2; breathe = 1 + Math.sin(t * 0.9) * 0.02; }
-    const bpx = L / 2, bpy = L;
-    const rootM = mMul(mTrans(gaze.x * 4, bob), mMul(mRotAbout(bpx, bpy, lean), mScaleAbout(bpx, bpy, facing, breathe)));
-
-    // ---- forward kinematics: compose world matrix per bone (parents first) ----
-    boneList.forEach((b) => {
-      const px = (b.pivot[0] / 100) * L, py = (b.pivot[1] / 100) * L;
-      const parentM = (b.parent && byIdBone[b.parent]) ? byIdBone[b.parent]._w : rootM;
-      b._w = mMul(parentM, mRotAbout(px, py, b.angle));
-      if (b.img) b.img.style.transform = `matrix(${b._w.map((v) => v.toFixed(4)).join(',')})`;
-    });
+    // ---- face: blink + talk via opacity crossfade of the registered layers ----
+    if (!blinking && t > nextBlinkAt) { blinking = true; blinkStart = t; nextBlinkAt = t + ANIM.blinkEveryMin + Math.random() * (ANIM.blinkEveryMax - ANIM.blinkEveryMin); }
+    let blinkAmt = 0;
+    if (blinking) { const bp = (t - blinkStart) / 0.13; if (bp >= 1) blinking = false; else blinkAmt = Math.sin(Math.min(1, bp) * Math.PI); }   // 0 → 1 → 0
+    if (mood === 'sleepy') blinkAmt = Math.max(blinkAmt, 0.6 + Math.sin(t * 1.1) * 0.08);        // heavy half-closed eyelids
+    let talkAmt = 0;
+    if (now < talkUntil) talkAmt = (Math.sin(t * 17) * 0.5 + 0.5);                                // mouth flapping while speaking
+    if (layerById.talk) layerById.talk.img.style.opacity = (talkAmt * (1 - blinkAmt)).toFixed(2);
+    if (layerById.blink) layerById.blink.img.style.opacity = blinkAmt.toFixed(2);
 
     updateMotion(dt);
   }
@@ -240,7 +208,9 @@
     bubble.style.opacity = 1; clearTimeout(bubbleTimer); clearInterval(typeTimer);
     let i = 0; bubble.textContent = '';
     typeTimer = setInterval(() => { i++; bubble.textContent = text.slice(0, i); if (i >= text.length) clearInterval(typeTimer); }, 22);
-    bubbleTimer = setTimeout(() => { bubble.style.opacity = 0; }, keepMs || (2500 + text.length * 45));
+    const hold = keepMs || (2500 + text.length * 45);
+    bubbleTimer = setTimeout(() => { bubble.style.opacity = 0; }, hold);
+    talkUntil = performance.now() + hold;           // animate the mouth while the bubble is showing
     if (settings.tts) speak(text);
   }
   function speak(text) { try { if (!('speechSynthesis' in window)) return; speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text.replace(/\[\[.*?\]\]/g, '')); u.lang = 'vi-VN'; speechSynthesis.speak(u); } catch (e) {} }
@@ -290,7 +260,7 @@
   function openChat() { chat.style.display = 'flex'; setTimeout(() => { const el = document.getElementById('chatin'); el && el.focus(); }, 30); markActive(); }
   chat.querySelector('#chatsend').onclick = () => { const el = document.getElementById('chatin'); const v = el.value; el.value = ''; chat.style.display = 'none'; handleUser(v); };
   chat.querySelector('#chatin').addEventListener('keydown', (e) => { if (e.key === 'Enter') chat.querySelector('#chatsend').click(); });
-  bar.addEventListener('click', (e) => { const a = e.target.getAttribute('data-a'); if (!a) return; if (a === 'chat') openChat(); else if (a === 'joke') tellJoke(); else if (a === 'wave') { setMood('happy', 2000); setGesture('wave', 1800); } else if (a === 'settings') openSettings(); else if (a === 'quit' && isEl) API.quit && API.quit(); });
+  bar.addEventListener('click', (e) => { const a = e.target.getAttribute('data-a'); if (!a) return; if (a === 'chat') openChat(); else if (a === 'joke') tellJoke(); else if (a === 'wave') { setMood('happy', 2200); greetNow(); say('Chào bạn! 👋'); } else if (a === 'settings') openSettings(); else if (a === 'quit' && isEl) API.quit && API.quit(); });
 
   let down = null, moved = false, panel = null;
   pet.addEventListener('mouseenter', () => { if (isEl) API.setInteractive && API.setInteractive(true); });
@@ -335,6 +305,6 @@
   // ---------------- boot ----------------
   loadStoredCharacter(); // if the user imported a custom character, use it
   const lastFact = facts[facts.length - 1];
-  setTimeout(() => { setGesture('wave', 2000); if (lastFact && Date.now() - lastFact.at < 3 * 24 * 3600000) say(`Chào lại nhé! Mình vẫn nhớ: "${lastFact.t}". Hôm nay sao rồi?`, 7000); else say(`Xin chào! Mình là ${settings.name} 🌸 Bấm vào mình để trò chuyện nha.`, 6000); }, 800);
+  setTimeout(() => { setMood('happy', 1800); greetNow(); if (lastFact && Date.now() - lastFact.at < 3 * 24 * 3600000) say(`Chào lại nhé! Mình vẫn nhớ: "${lastFact.t}". Hôm nay sao rồi?`, 7000); else say(`Xin chào! Mình là ${settings.name} 🌸 Bấm vào mình để trò chuyện nha.`, 6000); }, 800);
   if (!settings.apiKey && settings.provider !== 'ollama') setTimeout(() => { setMood('surprise', 3000); say('Mẹo: bấm ⚙️ nhập API key (Gemini miễn phí) để mình chat thông minh hơn!'); }, 8000);
 })();
