@@ -10,15 +10,11 @@
 <div id="pet-root"></div>
 <script>
   // Electron loads frames from the local assets folder.
-  // 2D skeletal rig parts (each a full-canvas transparent PNG; stacking = whole character)
+  // Living-portrait face layers (registered transparent PNGs).
   window.PET_FRAMES = {
-    body: 'assets/body.png',
-    upperArmL: 'assets/upperArmL.png',
-    foreArmL: 'assets/foreArmL.png',
-    upperArmR: 'assets/upperArmR.png',
-    foreArmR: 'assets/foreArmR.png',
-    legL: 'assets/legL.png',
-    legR: 'assets/legR.png'
+    base: 'assets/base.png',    // eyes open, mouth closed
+    blink: 'assets/blink.png',  // eyes closed
+    talk: 'assets/talk.png'     // mouth open
   };
 </script>
 <script src="app.js"></script>
