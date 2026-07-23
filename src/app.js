@@ -107,8 +107,8 @@
     // topo order: parents before children
     const map = {}; bones.forEach((b) => { map[b.id] = b; });
     const out = [], seen = {};
-    (function visit(b) { if (!b || seen[b.id]) return; if (b.parent && map[b.parent]) visit(map[b.parent]); seen[b.id] = 1; out.push(b); });
-    bones.forEach((b) => visit(b));
+    function visit(b) { if (!b || seen[b.id]) return; if (b.parent && map[b.parent]) visit(map[b.parent]); seen[b.id] = 1; out.push(b); }
+    bones.forEach(visit);
     boneList = out; byIdBone = map;
     [...bones].sort((a, b) => (a.z || 0) - (b.z || 0)).forEach((b) => { const im = document.createElement('img'); im.className = 'part'; im.draggable = false; im.src = b.image; im.style.transformOrigin = '0 0'; b.img = im; portrait.appendChild(im); });
     RIG.legSwing = (cfg.rig && cfg.rig.legSwing) || 8;
