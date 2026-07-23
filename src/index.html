@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; script-src 'self'; connect-src 'self' https: http: data:;" />
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="pet.css" />
+</head>
+<body>
+<div id="pet-root"></div>
+<script>
+  // Electron loads frames from the local assets folder.
+  // 2D skeletal rig parts (each a full-canvas transparent PNG; stacking = whole character)
+  window.PET_FRAMES = {
+    body: 'assets/body.png',
+    armL: 'assets/armL.png',
+    armR: 'assets/armR.png'
+  };
+</script>
+<script src="app.js"></script>
+</body>
+</html>
