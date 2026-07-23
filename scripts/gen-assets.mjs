@@ -10,7 +10,8 @@ try {
   const pack = JSON.parse(readFileSync(join(ROOT, 'character.example.json'), 'utf8'));
   const dir = join(ROOT, 'src', 'assets');
   mkdirSync(dir, { recursive: true });
-  for (const p of pack.parts || []) {
+  const items = pack.bones || pack.parts || [];   // v2 = bones, v1 = parts
+  for (const p of items) {
     if (!p.image || !String(p.image).startsWith('data:')) continue;
     const dest = join(dir, p.id + '.png');
     if (existsSync(dest)) { continue; }
