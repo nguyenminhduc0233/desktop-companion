@@ -77,13 +77,13 @@
   let layerList = [], layerById = {}, lastCfg = null;
   const Z = { base: 1, wind: 2, talk: 3, blink: 4 };   // wind frames sit under the eye/mouth layers
   const ANIM = { blinkEveryMin: 2.4, blinkEveryMax: 5.5 };
-  const WIND = { frames: [], fps: 7, a: null, b: null };   // hair-breeze frame sequence (played ping-pong during a gust)
+  const WIND = { frames: [], fps: 11, rect: null, imgs: [] };   // hair-breeze frame sequence (hard-cut ping-pong during a gust)
   function defaultCharacter() {
     const im = (id) => FRAMES[id];
     return {
       format: 'desktop-companion-character', version: 4, name: settings.name, canvas: 416,
       layers: [ { id: 'base', image: im('base') }, { id: 'blink', image: im('blink') }, { id: 'talk', image: im('talk') } ],
-      windFrames: (FRAMES.windFrames || []).slice(), windFps: 7,
+      windFrames: (FRAMES.windFrames || []).slice(), windRect: FRAMES.windRect || null, windFps: 11,
       anim: { blinkEveryMin: 2.4, blinkEveryMax: 5.5 }
     };
   }
@@ -98,11 +98,16 @@
       portrait.appendChild(im);
       const o = { id: l.id, image: l.image, img: im }; layerList.push(o); layerById[l.id] = o;
     });
-    // ---- wind: two <img> cross-blended to play the hair-breeze frame sequence ----
-    WIND.frames = (cfg.windFrames || []).slice(); WIND.fps = cfg.windFps || 7; WIND.a = null; WIND.b = null;
+    // ---- wind: one <img> per frame, positioned at windRect; played HARD-CUT (no blend) ----
+    WIND.frames = (cfg.windFrames || []).slice(); WIND.fps = cfg.windFps || 11; WIND.rect = cfg.windRect || null; WIND.imgs = [];
     if (WIND.frames.length >= 2) {
-      const mk = () => { const im = document.createElement('img'); im.className = 'layer'; im.draggable = false; im.style.zIndex = Z.wind; im.style.opacity = 0; im.src = WIND.frames[0]; portrait.appendChild(im); return im; };
-      WIND.a = mk(); WIND.b = mk();
+      const R = WIND.rect, cv = cfg.canvas || 416, D = 300;
+      WIND.frames.forEach((src) => {
+        const im = document.createElement('img'); im.className = 'wframe'; im.draggable = false; im.src = src; im.style.zIndex = Z.wind; im.style.opacity = 0;
+        if (R) { im.style.left = (R[0] / cv * D).toFixed(1) + 'px'; im.style.top = (R[1] / cv * D).toFixed(1) + 'px'; im.style.width = (R[2] / cv * D).toFixed(1) + 'px'; im.style.height = (R[3] / cv * D).toFixed(1) + 'px'; }
+        else { im.style.left = '0'; im.style.top = '0'; im.style.width = D + 'px'; im.style.height = D + 'px'; }
+        portrait.appendChild(im); WIND.imgs.push(im);
+      });
     }
     Object.assign(ANIM, cfg.anim || {});
   }
@@ -142,23 +147,21 @@
     // ---- body stands still in place (no roaming, no idle body motion) ----
     portrait.style.transform = `scale(${facing}, 1)`;
 
-    // ---- WIND: play the hair-breeze frame sequence (ping-pong) while a gust is on ----
+    // ---- WIND: hard-cut frame playback (no cross-blend → no "afterimage"), ping-pong with slow in/out ----
     const gusting = now < FX.gustUntil;
     let envTarget = gusting ? 1 : 0;
     if (now < talkUntil) envTarget = 0;                                   // hide wind so speech reads clearly
-    windEnv += (envTarget - windEnv) * Math.min(1, dt * 3);               // smooth ease in / out
-    if (WIND.a && WIND.frames.length >= 2) {
-      const n = WIND.frames.length, span = (n - 1) * 2;                   // ping-pong: 0→n-1→0
+    windEnv += (envTarget - windEnv) * Math.min(1, dt * 3);               // fade the WHOLE clip in/out vs the still base
+    if (WIND.imgs.length >= 2) {
+      const n = WIND.imgs.length, span = 2 * (n - 1);
       if (gusting) windIdx += dt * WIND.fps;
       let ph = windIdx % span; if (ph < 0) ph += span;
-      const k = Math.floor(ph), frac = ph - k;
-      const map = (j) => (j <= n - 1 ? j : span - j);
-      const ia = map(k), ib = map((k + 1) % span);
-      if (WIND.a.src !== WIND.frames[ia]) WIND.a.src = WIND.frames[ia];
-      if (WIND.b.src !== WIND.frames[ib]) WIND.b.src = WIND.frames[ib];
-      WIND.a.style.opacity = windEnv.toFixed(3);
-      WIND.b.style.opacity = (windEnv * frac).toFixed(3);
+      const tri = ph <= (n - 1) ? ph / (n - 1) : (span - ph) / (n - 1);   // 0 → 1 → 0 (triangle)
+      const eased = tri < 0.5 ? 2 * tri * tri : 1 - Math.pow(-2 * tri + 2, 2) / 2;   // Slow In & Slow Out
+      const idx = Math.round(eased * (n - 1));
+      for (let i = 0; i < n; i++) WIND.imgs[i].style.opacity = (i === idx ? windEnv : 0).toFixed(3);   // exactly ONE frame visible
     }
+    if (layerById.base) layerById.base.img.style.opacity = (1 - windEnv).toFixed(3);   // hide the still base under the wind clip (no old-hair bleed-through)
 
     // ---- eyes: gentle blink (paused briefly during a gust, resumes right after) ----
     let blinkAmt = 0;
