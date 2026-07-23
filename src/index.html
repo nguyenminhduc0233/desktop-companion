@@ -12,9 +12,11 @@
   // Electron loads frames from the local assets folder.
   // Living-portrait face layers (registered transparent PNGs).
   window.PET_FRAMES = {
-    base: 'assets/base.png',    // eyes open, mouth closed
+    base: 'assets/base.png',    // eyes open, mouth closed (idle)
     blink: 'assets/blink.png',  // eyes closed
-    talk: 'assets/talk.png'     // mouth open
+    talk: 'assets/talk.png',    // mouth open (speaking)
+    windL: 'assets/windL.png',  // hair + cardigan blown left
+    windR: 'assets/windR.png'   // hair + cardigan blown right
   };
 </script>
 <script src="app.js"></script>
