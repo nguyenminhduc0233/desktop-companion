@@ -116,6 +116,9 @@
   // face state
   let blinking = false, blinkStart = 0, nextBlinkAt = 1.5;
   let talkUntil = 0, greetUntil = 0, popUntil = 0;
+  // ambient wind gusts (snow / sakura / dry leaves / green leaves)
+  const FX = { canvas: null, ctx: null, parts: [], type: null, gustUntil: 0, windX: 1, nextGustAt: 0, windCur: 0 };
+  const GUSTS = ['snow', 'sakura', 'dryleaf', 'greenleaf'];
 
   function setMood(m, holdMs) {
     mood = m || 'normal';
@@ -142,7 +145,10 @@
     if (mood === 'annoyed') { tx += Math.sin(t * 34) * 3; }                              // quick shiver
     if (now < greetUntil) { const k = (greetUntil - now) / 950; bob += -Math.abs(Math.sin(now / 85)) * 8 * k; breathe += 0.03 * k; }  // happy bounce
     if (now < popUntil) { const k = (popUntil - now) / 520; breathe += 0.06 * k; bob += -6 * k; }                                    // surprise pop
-    portrait.style.transform = `translate(${tx.toFixed(1)}px, ${(bob + ty).toFixed(1)}px) rotate(${rot.toFixed(2)}deg) scale(${(facing * breathe).toFixed(4)}, ${breathe.toFixed(4)})`;
+    const wind = FX.windCur;                                                            // wind gust reaction (hair/cloth "flutter" on the whole body)
+    rot += wind * 2.4;
+    const windSkew = wind * (2 + Math.sin(t * 7) * 1.6);
+    portrait.style.transform = `translate(${tx.toFixed(1)}px, ${(bob + ty).toFixed(1)}px) rotate(${rot.toFixed(2)}deg) skewX(${windSkew.toFixed(2)}deg) scale(${(facing * breathe).toFixed(4)}, ${breathe.toFixed(4)})`;
 
     // ---- face: blink + talk via opacity crossfade of the registered layers ----
     if (!blinking && t > nextBlinkAt) { blinking = true; blinkStart = t; nextBlinkAt = t + ANIM.blinkEveryMin + Math.random() * (ANIM.blinkEveryMax - ANIM.blinkEveryMin); }
@@ -155,8 +161,56 @@
     if (layerById.blink) layerById.blink.img.style.opacity = blinkAmt.toFixed(2);
 
     updateMotion(dt);
+    stepFX(dt, now);
   }
   requestAnimationFrame(loop);
+
+  // ---------------- ambient wind + particles ----------------
+  function initFX() {
+    const c = document.createElement('canvas'); c.id = 'fx'; root.appendChild(c);
+    FX.canvas = c; FX.ctx = c.getContext('2d');
+    const rz = () => { c.width = Math.max(1, window.innerWidth); c.height = Math.max(1, window.innerHeight); };
+    rz(); window.addEventListener('resize', rz);
+    FX.nextGustAt = performance.now() + 7000 + Math.random() * 12000;   // first gust after ~7-19s
+  }
+  function startGust(type) {
+    FX.type = type || GUSTS[(Math.random() * GUSTS.length) | 0];
+    FX.windX = Math.random() < 0.5 ? -1 : 1;
+    FX.gustUntil = performance.now() + (3200 + Math.random() * 2400);
+  }
+  function spawnParticle() {
+    const W = FX.canvas.width, H = FX.canvas.height, dir = FX.windX, t = FX.type;
+    const x = dir > 0 ? -12 : W + 12, y = Math.random() * H * 0.92;
+    const spd = dir * (55 + Math.random() * 85);
+    const p = { x, y, rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.08, type: t, sway: Math.random() * 6.28 };
+    if (t === 'snow') { p.size = 1.6 + Math.random() * 2.6; p.vx = spd * 0.5; p.vy = 22 + Math.random() * 26; p.op = 0.5 + Math.random() * 0.3; }
+    else if (t === 'sakura') { p.size = 5 + Math.random() * 4; p.vx = spd; p.vy = 28 + Math.random() * 30; p.op = 0.72; }
+    else if (t === 'dryleaf') { p.size = 6 + Math.random() * 4; p.vx = spd; p.vy = 26 + Math.random() * 26; p.op = 0.78; }
+    else { p.size = 5.5 + Math.random() * 4; p.vx = spd * 0.95; p.vy = 24 + Math.random() * 24; p.op = 0.76; }
+    FX.parts.push(p);
+  }
+  function drawLeaf(ctx, p, col) { ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0, 0, p.size, p.size * 0.52, 0, 0, 6.2832); ctx.fill(); ctx.strokeStyle = 'rgba(60,40,10,.25)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-p.size, 0); ctx.lineTo(p.size, 0); ctx.stroke(); }
+  function stepFX(dt, now) {
+    if (!FX.ctx) return;
+    const ctx = FX.ctx, W = FX.canvas.width, H = FX.canvas.height;
+    if (now > FX.nextGustAt) { startGust(); FX.nextGustAt = now + 25000 + Math.random() * 35000; }   // a gust every ~25-60s
+    const gusting = now < FX.gustUntil;
+    if (gusting) { const cap = FX.type === 'snow' ? 44 : 18; const rate = FX.type === 'snow' ? 2 : 1; for (let i = 0; i < rate; i++) if (FX.parts.length < cap && Math.random() < 0.7) spawnParticle(); }
+    ctx.clearRect(0, 0, W, H);
+    for (let i = FX.parts.length - 1; i >= 0; i--) {
+      const p = FX.parts[i]; p.sway += dt * 2.2; const swayX = Math.sin(p.sway) * (p.type === 'snow' ? 8 : 15);
+      p.x += (p.vx + swayX) * dt; p.y += p.vy * dt; p.rot += p.vr;
+      if (p.y > H + 18 || p.x < -24 || p.x > W + 24) { FX.parts.splice(i, 1); continue; }
+      ctx.save(); ctx.globalAlpha = p.op; ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      if (p.type === 'snow') { ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(0, 0, p.size, 0, 6.2832); ctx.fill(); }
+      else if (p.type === 'sakura') { ctx.fillStyle = '#f6b4d0'; ctx.beginPath(); ctx.ellipse(0, 0, p.size, p.size * 0.62, 0, 0, 6.2832); ctx.fill(); ctx.fillStyle = 'rgba(230,130,175,.55)'; ctx.beginPath(); ctx.ellipse(0, -p.size * 0.25, p.size * 0.5, p.size * 0.3, 0, 0, 6.2832); ctx.fill(); }
+      else if (p.type === 'dryleaf') { drawLeaf(ctx, p, '#c67a34'); }
+      else { drawLeaf(ctx, p, '#8ec06a'); }
+      ctx.restore();
+    }
+    const target = gusting ? FX.windX : 0;
+    FX.windCur += (target - FX.windCur) * Math.min(1, dt * 3);
+  }
 
   // ---------------- gaze / follow cursor ----------------
   function lookAt(nx, ny) { gazeT.x = clamp(nx, -1, 1); gazeT.y = clamp(ny, -1, 1); markActive(); }
@@ -303,6 +357,7 @@
   }
 
   // ---------------- boot ----------------
+  initFX();               // ambient wind/particle system
   loadStoredCharacter(); // if the user imported a custom character, use it
   const lastFact = facts[facts.length - 1];
   setTimeout(() => { setMood('happy', 1800); greetNow(); if (lastFact && Date.now() - lastFact.at < 3 * 24 * 3600000) say(`Chào lại nhé! Mình vẫn nhớ: "${lastFact.t}". Hôm nay sao rồi?`, 7000); else say(`Xin chào! Mình là ${settings.name} 🌸 Bấm vào mình để trò chuyện nha.`, 6000); }, 800);
