@@ -75,14 +75,17 @@
   root.appendChild(pet); pet.appendChild(portrait);
   // ---- 2D LIVING-PORTRAIT renderer (face layers + secondary micro-motion) ----
   let layerList = [], layerById = {}, lastCfg = null;
-  const Z = { base: 1, talk: 2, blink: 3 };            // blink drawn on top of talk
-  const ANIM = { breatheAmp: 0.012, bobAmp: 2.0, swayDeg: 0.7, blinkEveryMin: 2.4, blinkEveryMax: 5.5 };
+  const Z = { base: 1, windL: 2, windR: 2, talk: 3, blink: 4 };   // wind variants under the eye/mouth layers
+  const ANIM = { blinkEveryMin: 2.4, blinkEveryMax: 5.5 };
   function defaultCharacter() {
     const im = (id) => FRAMES[id];
     return {
       format: 'desktop-companion-character', version: 3, name: settings.name, canvas: 512,
-      layers: [ { id: 'base', image: im('base') }, { id: 'blink', image: im('blink') }, { id: 'talk', image: im('talk') } ],
-      anim: { breatheAmp: 0.012, bobAmp: 2.0, swayDeg: 0.7, blinkEveryMin: 2.4, blinkEveryMax: 5.5 }
+      layers: [
+        { id: 'base', image: im('base') }, { id: 'blink', image: im('blink') }, { id: 'talk', image: im('talk') },
+        { id: 'windL', image: im('windL') }, { id: 'windR', image: im('windR') }
+      ],
+      anim: { blinkEveryMin: 2.4, blinkEveryMax: 5.5 }
     };
   }
   function buildRig(cfg) {
@@ -115,18 +118,16 @@
   let gaze = { x: 0, y: 0 }, gazeT = { x: 0, y: 0 };
   // face state
   let blinking = false, blinkStart = 0, nextBlinkAt = 1.5;
-  let talkUntil = 0, greetUntil = 0, popUntil = 0;
+  let talkUntil = 0, windOpCur = 0;
   // ambient wind gusts (snow / sakura / dry leaves / green leaves)
   const FX = { canvas: null, ctx: null, parts: [], type: null, gustUntil: 0, windX: 1, nextGustAt: 0, windCur: 0 };
   const GUSTS = ['snow', 'sakura', 'dryleaf', 'greenleaf'];
 
   function setMood(m, holdMs) {
     mood = m || 'normal';
-    if (m === 'happy' || m === 'celebrate') greetUntil = performance.now() + 950;
-    if (m === 'surprise') popUntil = performance.now() + 520;
+    if (m === 'happy' || m === 'celebrate') startGust();   // react with a soft hair/cardigan flutter
     if (holdMs) { clearTimeout(setMood._t); setMood._t = setTimeout(() => { mood = 'normal'; }, holdMs); }
   }
-  function greetNow() { greetUntil = performance.now() + 1100; }
 
   function loop(now) {
     requestAnimationFrame(loop);
@@ -134,29 +135,29 @@
     walking = motion.state === 'walk';
     gaze.x = lerp(gaze.x, gazeT.x, Math.min(1, dt * 6)); gaze.y = lerp(gaze.y, gazeT.y, Math.min(1, dt * 6));
 
-    // ---- whole-body micro-motion: breathing / idle sway / lean toward cursor ----
-    let breathe = 1 + Math.sin(t * 1.6) * ANIM.breatheAmp;
-    let bob = Math.sin(t * 1.6) * ANIM.bobAmp;
-    let sway = Math.sin(t * 0.8) * ANIM.swayDeg;
-    let tx = gaze.x * 6, ty = gaze.y * 2;
-    let rot = gaze.x * 1.2 + sway;
-    if (walking) { bob += -Math.abs(Math.sin(t * 7)) * 3; rot += facing * 1.5; }       // gentle floaty stride
-    if (mood === 'sleepy') { breathe = 1 + Math.sin(t * 0.9) * 0.02; rot += 2.2; bob += 3; }
-    if (mood === 'annoyed') { tx += Math.sin(t * 34) * 3; }                              // quick shiver
-    if (now < greetUntil) { const k = (greetUntil - now) / 950; bob += -Math.abs(Math.sin(now / 85)) * 8 * k; breathe += 0.03 * k; }  // happy bounce
-    if (now < popUntil) { const k = (popUntil - now) / 520; breathe += 0.06 * k; bob += -6 * k; }                                    // surprise pop
-    const wind = FX.windCur;                                                            // wind gust reaction (hair/cloth "flutter" on the whole body)
-    rot += wind * 2.4;
-    const windSkew = wind * (2 + Math.sin(t * 7) * 1.6);
-    portrait.style.transform = `translate(${tx.toFixed(1)}px, ${(bob + ty).toFixed(1)}px) rotate(${rot.toFixed(2)}deg) skewX(${windSkew.toFixed(2)}deg) scale(${(facing * breathe).toFixed(4)}, ${breathe.toFixed(4)})`;
+    // ---- body stays STILL when idle (only the eyes move); mirror only when walking ----
+    portrait.style.transform = `scale(${facing}, 1)`;
 
-    // ---- face: blink + talk via opacity crossfade of the registered layers ----
-    if (!blinking && t > nextBlinkAt) { blinking = true; blinkStart = t; nextBlinkAt = t + ANIM.blinkEveryMin + Math.random() * (ANIM.blinkEveryMax - ANIM.blinkEveryMin); }
+    // ---- WIND: hair tails + cardigan flutter by fading in a "blown" variant ----
+    const gusting = now < FX.gustUntil;
+    let windTarget = gusting ? (0.82 + 0.16 * Math.sin(t * 4)) : 0;   // gentle flutter envelope during a gust
+    if (now < talkUntil) windTarget *= 0.15;                          // let speech read clearly
+    windOpCur += (windTarget - windOpCur) * Math.min(1, dt * 4);      // ease in / out
+    const useR = FX.windX >= 0;                                       // blow toward the wind direction
+    if (layerById.windR) layerById.windR.img.style.opacity = (useR ? windOpCur : 0).toFixed(3);
+    if (layerById.windL) layerById.windL.img.style.opacity = (useR ? 0 : windOpCur).toFixed(3);
+
+    // ---- eyes: blink (paused while the wind variant is showing, to avoid a hair snap) ----
     let blinkAmt = 0;
-    if (blinking) { const bp = (t - blinkStart) / 0.13; if (bp >= 1) blinking = false; else blinkAmt = Math.sin(Math.min(1, bp) * Math.PI); }   // 0 → 1 → 0
-    if (mood === 'sleepy') blinkAmt = Math.max(blinkAmt, 0.6 + Math.sin(t * 1.1) * 0.08);        // heavy half-closed eyelids
+    if (windOpCur < 0.25) {
+      if (!blinking && t > nextBlinkAt) { blinking = true; blinkStart = t; nextBlinkAt = t + ANIM.blinkEveryMin + Math.random() * (ANIM.blinkEveryMax - ANIM.blinkEveryMin); }
+      if (blinking) { const bp = (t - blinkStart) / 0.13; if (bp >= 1) blinking = false; else blinkAmt = Math.sin(Math.min(1, bp) * Math.PI); }   // 0 → 1 → 0
+      if (mood === 'sleepy') blinkAmt = Math.max(blinkAmt, 0.6 + Math.sin(t * 1.1) * 0.08);       // heavy half-closed eyelids
+    } else { blinking = false; nextBlinkAt = t + 1.0; }
+
+    // ---- mouth: talk while speaking (also paused during the wind variant) ----
     let talkAmt = 0;
-    if (now < talkUntil) talkAmt = (Math.sin(t * 17) * 0.5 + 0.5);                                // mouth flapping while speaking
+    if (now < talkUntil && windOpCur < 0.25) talkAmt = (Math.sin(t * 17) * 0.5 + 0.5);
     if (layerById.talk) layerById.talk.img.style.opacity = (talkAmt * (1 - blinkAmt)).toFixed(2);
     if (layerById.blink) layerById.blink.img.style.opacity = blinkAmt.toFixed(2);
 
@@ -314,7 +315,7 @@
   function openChat() { chat.style.display = 'flex'; setTimeout(() => { const el = document.getElementById('chatin'); el && el.focus(); }, 30); markActive(); }
   chat.querySelector('#chatsend').onclick = () => { const el = document.getElementById('chatin'); const v = el.value; el.value = ''; chat.style.display = 'none'; handleUser(v); };
   chat.querySelector('#chatin').addEventListener('keydown', (e) => { if (e.key === 'Enter') chat.querySelector('#chatsend').click(); });
-  bar.addEventListener('click', (e) => { const a = e.target.getAttribute('data-a'); if (!a) return; if (a === 'chat') openChat(); else if (a === 'joke') tellJoke(); else if (a === 'wave') { setMood('happy', 2200); greetNow(); say('Chào bạn! 👋'); } else if (a === 'settings') openSettings(); else if (a === 'quit' && isEl) API.quit && API.quit(); });
+  bar.addEventListener('click', (e) => { const a = e.target.getAttribute('data-a'); if (!a) return; if (a === 'chat') openChat(); else if (a === 'joke') tellJoke(); else if (a === 'wave') { setMood('happy', 2200); say('Chào bạn! 👋'); } else if (a === 'settings') openSettings(); else if (a === 'quit' && isEl) API.quit && API.quit(); });
 
   let down = null, moved = false, panel = null;
   pet.addEventListener('mouseenter', () => { if (isEl) API.setInteractive && API.setInteractive(true); });
@@ -327,7 +328,7 @@
     if (wasDrag) { motion.falling = true; return; }
     const now = Date.now(); clicks.push(now); clicks = clicks.filter((c) => now - c < 3000); markActive();
     if (clicks.length > 6) { setMood('annoyed', 3000); say('Ê! Đừng bấm mình nhiều thế 😠'); clicks = []; }
-    else { setMood('happy', 2500); if (chat.style.display === 'none') openChat(); }
+    else { if (chat.style.display === 'none') openChat(); }
   });
 
   // ---------------- settings panel ----------------
@@ -360,6 +361,6 @@
   initFX();               // ambient wind/particle system
   loadStoredCharacter(); // if the user imported a custom character, use it
   const lastFact = facts[facts.length - 1];
-  setTimeout(() => { setMood('happy', 1800); greetNow(); if (lastFact && Date.now() - lastFact.at < 3 * 24 * 3600000) say(`Chào lại nhé! Mình vẫn nhớ: "${lastFact.t}". Hôm nay sao rồi?`, 7000); else say(`Xin chào! Mình là ${settings.name} 🌸 Bấm vào mình để trò chuyện nha.`, 6000); }, 800);
+  setTimeout(() => { setMood('happy', 1800); if (lastFact && Date.now() - lastFact.at < 3 * 24 * 3600000) say(`Chào lại nhé! Mình vẫn nhớ: "${lastFact.t}". Hôm nay sao rồi?`, 7000); else say(`Xin chào! Mình là ${settings.name} 🌸 Bấm vào mình để trò chuyện nha.`, 6000); }, 800);
   if (!settings.apiKey && settings.provider !== 'ollama') setTimeout(() => { setMood('surprise', 3000); say('Mẹo: bấm ⚙️ nhập API key (Gemini miễn phí) để mình chat thông minh hơn!'); }, 8000);
 })();
