@@ -1,0 +1,10 @@
+node_modules/
+release/
+build/
+src/assets/*.png
+out/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
