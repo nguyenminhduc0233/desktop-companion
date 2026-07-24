@@ -83,7 +83,6 @@
     return {
       format: 'desktop-companion-character', version: 4, name: settings.name, canvas: 416,
       layers: [ { id: 'base', image: im('base') }, { id: 'blink', image: im('blink') }, { id: 'talk', image: im('talk') } ],
-      windFrames: (FRAMES.windFrames || []).slice(), windRect: FRAMES.windRect || null, windFps: 11,
       anim: { blinkEveryMin: 2.4, blinkEveryMax: 5.5 }
     };
   }
@@ -98,17 +97,7 @@
       portrait.appendChild(im);
       const o = { id: l.id, image: l.image, img: im }; layerList.push(o); layerById[l.id] = o;
     });
-    // ---- wind: one <img> per frame, positioned at windRect; played HARD-CUT (no blend) ----
-    WIND.frames = (cfg.windFrames || []).slice(); WIND.fps = cfg.windFps || 11; WIND.rect = cfg.windRect || null; WIND.imgs = [];
-    if (WIND.frames.length >= 2) {
-      const R = WIND.rect, cv = cfg.canvas || 416, D = 300;
-      WIND.frames.forEach((src) => {
-        const im = document.createElement('img'); im.className = 'wframe'; im.draggable = false; im.src = src; im.style.zIndex = Z.wind; im.style.opacity = 0;
-        if (R) { im.style.left = (R[0] / cv * D).toFixed(1) + 'px'; im.style.top = (R[1] / cv * D).toFixed(1) + 'px'; im.style.width = (R[2] / cv * D).toFixed(1) + 'px'; im.style.height = (R[3] / cv * D).toFixed(1) + 'px'; }
-        else { im.style.left = '0'; im.style.top = '0'; im.style.width = D + 'px'; im.style.height = D + 'px'; }
-        portrait.appendChild(im); WIND.imgs.push(im);
-      });
-    }
+    WIND.imgs = [];   // character wind animation removed — body stays perfectly still (only eyes blink)
     Object.assign(ANIM, cfg.anim || {});
   }
   buildRig(defaultCharacter());
@@ -144,36 +133,18 @@
     const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
     gaze.x = lerp(gaze.x, gazeT.x, Math.min(1, dt * 6)); gaze.y = lerp(gaze.y, gazeT.y, Math.min(1, dt * 6));
 
-    // ---- body stands still in place (no roaming, no idle body motion) ----
+    // ---- body stands PERFECTLY still — no roaming, no wind on the body, no drift. Only the eyes move. ----
     portrait.style.transform = `scale(${facing}, 1)`;
 
-    // ---- WIND: hard-cut frame playback (no cross-blend → no "afterimage"), ping-pong with slow in/out ----
-    const gusting = now < FX.gustUntil;
-    let envTarget = gusting ? 1 : 0;
-    if (now < talkUntil) envTarget = 0;                                   // hide wind so speech reads clearly
-    windEnv += (envTarget - windEnv) * Math.min(1, dt * 3);               // fade the WHOLE clip in/out vs the still base
-    if (WIND.imgs.length >= 2) {
-      const n = WIND.imgs.length, span = 2 * (n - 1);
-      if (gusting) windIdx += dt * WIND.fps;
-      let ph = windIdx % span; if (ph < 0) ph += span;
-      const tri = ph <= (n - 1) ? ph / (n - 1) : (span - ph) / (n - 1);   // 0 → 1 → 0 (triangle)
-      const eased = tri < 0.5 ? 2 * tri * tri : 1 - Math.pow(-2 * tri + 2, 2) / 2;   // Slow In & Slow Out
-      const idx = Math.round(eased * (n - 1));
-      for (let i = 0; i < n; i++) WIND.imgs[i].style.opacity = (i === idx ? windEnv : 0).toFixed(3);   // exactly ONE frame visible
-    }
-    if (layerById.base) layerById.base.img.style.opacity = (1 - windEnv).toFixed(3);   // hide the still base under the wind clip (no old-hair bleed-through)
-
-    // ---- eyes: gentle blink (paused briefly during a gust, resumes right after) ----
+    // ---- eyes: gentle blink (the only idle motion) ----
     let blinkAmt = 0;
-    if (windEnv < 0.5) {
-      if (!blinking && t > nextBlinkAt) { blinking = true; blinkStart = t; nextBlinkAt = t + ANIM.blinkEveryMin + Math.random() * (ANIM.blinkEveryMax - ANIM.blinkEveryMin); }
-      if (blinking) { const bp = (t - blinkStart) / 0.13; if (bp >= 1) blinking = false; else blinkAmt = Math.sin(Math.min(1, bp) * Math.PI); }
-      if (mood === 'sleepy') blinkAmt = Math.max(blinkAmt, 0.6 + Math.sin(t * 1.1) * 0.08);
-    } else { blinking = false; nextBlinkAt = t + 1.0; }
+    if (!blinking && t > nextBlinkAt) { blinking = true; blinkStart = t; nextBlinkAt = t + ANIM.blinkEveryMin + Math.random() * (ANIM.blinkEveryMax - ANIM.blinkEveryMin); }
+    if (blinking) { const bp = (t - blinkStart) / 0.13; if (bp >= 1) blinking = false; else blinkAmt = Math.sin(Math.min(1, bp) * Math.PI); }   // 0 → 1 → 0
+    if (mood === 'sleepy') blinkAmt = Math.max(blinkAmt, 0.6 + Math.sin(t * 1.1) * 0.08);
 
     // ---- mouth: talk while speaking ----
     let talkAmt = 0;
-    if (now < talkUntil && windEnv < 0.5) talkAmt = (Math.sin(t * 17) * 0.5 + 0.5);
+    if (now < talkUntil) talkAmt = (Math.sin(t * 17) * 0.5 + 0.5);
     if (layerById.talk) layerById.talk.img.style.opacity = (talkAmt * (1 - blinkAmt)).toFixed(2);
     if (layerById.blink) layerById.blink.img.style.opacity = blinkAmt.toFixed(2);
 
