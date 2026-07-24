@@ -16,6 +16,8 @@
   const FRAMES = window.PET_FRAMES || {};
   const API = window.petAPI || null;
   const isEl = !!(API && API.isElectron);
+  const isMobile = !!(window.Capacitor);                 // Android app (Capacitor)
+  if (isMobile) document.documentElement.classList.add('mobile');
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const lerp = (a, b, t) => a + (b - a) * t;
 
