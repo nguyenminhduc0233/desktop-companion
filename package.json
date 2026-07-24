@@ -1,7 +1,7 @@
 {
   "name": "desktop-companion",
   "version": "1.0.0",
-  "description": "A cute anime desktop companion (desktop pet): always-on-top character that reacts, chats with AI (bring-your-own-key), reminds you to rest, follows your cursor, and can be dragged. Electron.",
+  "description": "A cute anime AI companion — runs as a transparent always-on-top desktop pet (Windows/Linux via Electron) and as a phone app (Android via Capacitor). Reacts, blinks, chats with AI (bring-your-own-key), and remembers.",
   "author": "Desktop Companion",
   "license": "MIT",
   "main": "electron/main.cjs",
@@ -10,11 +10,17 @@
     "geticon": "node scripts/gen-icon.cjs",
     "postinstall": "node scripts/gen-assets.mjs && node scripts/gen-icon.cjs",
     "dist:win": "node scripts/gen-icon.cjs && electron-builder --win portable --publish never",
-    "dist:linux": "node scripts/gen-icon.cjs && electron-builder --linux AppImage --publish never"
+    "dist:linux": "node scripts/gen-icon.cjs && electron-builder --linux AppImage --publish never",
+    "android:add": "cap add android",
+    "android:sync": "cap sync android",
+    "android:apk": "cap sync android && cd android && ./gradlew assembleDebug"
   },
   "devDependencies": {
     "electron": "^31.3.1",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/android": "^6.1.2"
   },
   "build": {
     "appId": "com.desktopcompanion.app",
