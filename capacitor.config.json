@@ -1,0 +1,8 @@
+{
+  "appId": "com.desktopcompanion.app",
+  "appName": "Desktop Companion",
+  "webDir": "src",
+  "android": {
+    "allowMixedContent": true
+  }
+}
