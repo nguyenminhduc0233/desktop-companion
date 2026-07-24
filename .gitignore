@@ -2,6 +2,7 @@ node_modules/
 release/
 build/
 src/assets/*.png
+android/
 out/
 *.log
 .DS_Store
