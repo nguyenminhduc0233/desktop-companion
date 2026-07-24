@@ -124,7 +124,6 @@
 
   function setMood(m, holdMs) {
     mood = m || 'normal';
-    if (m === 'happy' || m === 'celebrate') startGust();   // react with a soft hair/cardigan flutter
     if (holdMs) { clearTimeout(setMood._t); setMood._t = setTimeout(() => { mood = 'normal'; }, holdMs); }
   }
 
@@ -159,7 +158,7 @@
     FX.canvas = c; FX.ctx = c.getContext('2d');
     const rz = () => { c.width = Math.max(1, window.innerWidth); c.height = Math.max(1, window.innerHeight); };
     rz(); window.addEventListener('resize', rz);
-    FX.nextGustAt = performance.now() + 7000 + Math.random() * 12000;   // first gust after ~7-19s
+    FX.nextGustAt = Infinity;   // ambient particles OFF — nothing moves except the eyes (blink)
   }
   function startGust(type) {
     FX.type = type || GUSTS[(Math.random() * GUSTS.length) | 0];
