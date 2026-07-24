@@ -7,15 +7,27 @@ html, body { width: 100%; height: 100%; background: transparent !important; over
 /* character — living portrait (stacked face layers, animated as one image) */
 #pet { position: relative; width: 300px; height: 300px; cursor: grab; }
 #pet:active { cursor: grabbing; }
-#portrait { position: absolute; inset: 0; width: 300px; height: 300px;
-  transform-origin: 50% 100%; will-change: transform; filter: drop-shadow(0 8px 9px rgba(0,0,0,.4)); }
-.layer { position: absolute; top: 0; left: 0; width: 300px; height: 300px; object-fit: contain; object-position: center bottom; will-change: opacity; backface-visibility: hidden; }
+#portrait { position: absolute; inset: 0; transform-origin: 50% 100%; will-change: transform; filter: drop-shadow(0 8px 9px rgba(0,0,0,.4)); }
+.layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; will-change: opacity; backface-visibility: hidden; }
 
 /* hair-breeze frame (positioned at windRect; hard-cut playback) */
 .wframe { position: absolute; object-fit: fill; will-change: opacity; backface-visibility: hidden; }
 
 /* ambient wind/particle canvas — covers the window, never blocks clicks */
 #fx { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+
+/* ===== Phone layout (Android/Capacitor) — normal fullscreen app, character on a wallpaper ===== */
+html.mobile, html.mobile body { background: radial-gradient(1100px 800px at 50% -5%, #2a2350, #141127 62%, #0d0b1c) !important; height: 100%; overflow: hidden; }
+html.mobile #pet-root { position: fixed; left: 0; right: 0; bottom: 12%; width: 100%; align-items: center; }
+html.mobile #pet { width: min(78vw, 340px); height: min(78vw, 340px); }
+html.mobile #bar { opacity: 1; gap: 14px; margin-top: 14px; }
+html.mobile #bar button { width: 50px; height: 50px; font-size: 22px; }
+html.mobile #chatbox { width: min(90vw, 420px); margin-top: 10px; }
+html.mobile #chatbox input { font-size: 16px; padding: 13px 15px; }
+html.mobile #chatbox button { width: 50px; font-size: 18px; }
+html.mobile #bubble { position: fixed; top: 7%; bottom: auto; left: 50%; right: auto; transform: translateX(-50%); max-width: 82vw; font-size: 15.5px; text-align: center; }
+html.mobile #bubble::after { display: none; }
+html.mobile #panel { position: fixed; left: 50%; right: auto; bottom: 4%; transform: translateX(-50%); width: min(92vw, 360px); }
 
 /* speech bubble */
 #bubble { position: absolute; bottom: 292px; right: 4px; max-width: 240px; min-width: 84px;
